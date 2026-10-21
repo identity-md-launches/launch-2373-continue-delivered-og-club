@@ -4,6 +4,7 @@ import {PepeMock} from "./helpers/PepeMocks.sol";
 import {IDelegateRegistry} from "../src/interfaces/IDelegateRegistry.sol";
 
 import {Test} from "forge-std/Test.sol";
+import {ClubsOccupancy} from "./helpers/ClubsOccupancy.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {OGClubClubs} from "../src/OGClubClubs.sol";
 import {OGClubFurniture} from "../src/OGClubFurniture.sol";
@@ -25,6 +26,7 @@ contract AdversarialClubsHandler is Test {
 
     // Ghosts.
     mapping(uint256 clubId => bool[100]) internal grid;
+    mapping(uint256 clubId => ClubsOccupancy.Slots) private occupancySlots;
     mapping(uint256 clubId => uint256) public ghostPieces;
     mapping(uint256 item => uint256) public ghostHeld;
     mapping(uint256 item => uint8) public ghostW;
@@ -60,6 +62,10 @@ contract AdversarialClubsHandler is Test {
         return clubs.totalSupply();
     }
 
+    function occupancy(uint256 clubId) external view returns (uint256 floor, uint256 walls) {
+        return ClubsOccupancy.read(clubs, occupancySlots[clubId]);
+    }
+
     function gridHash(uint256 clubId) external view returns (bytes32) {
         return keccak256(abi.encode(grid[clubId]));
     }
@@ -80,6 +86,7 @@ contract AdversarialClubsHandler is Test {
         PepeMock(address(clubs.pepes())).mint(payer, pepeId);
         vm.prank(payer);
         uint256 id = clubs.mintClub(pepeId);
+        occupancySlots[id] = ClubsOccupancy.locate(stdstore, clubs, id);
         ++ghostMints;
         assertEq(id, ghostMints, "club id must equal the supplied Pepe id");
         assertEq(clubs.ownerOf(id), to);
@@ -398,7 +405,7 @@ contract ClubsAdversarialInvariantTest is Test {
         assertEq(handler.ghostHeld(0), 0);
     }
 
-    /// @dev Rebuild each club's occupancy from its stored pieces alone and compare with the view and the model.
+    /// @dev Rebuild each club's occupancy from its pieces and compare with storage and the model.
     /// forge-config: default.invariant.runs = 64
     /// forge-config: default.invariant.depth = 64
     function invariant_LayoutsFitNeverOverlapNeverCoverDoor() public view {
@@ -427,15 +434,14 @@ contract ClubsAdversarialInvariantTest is Test {
                     }
                 }
             }
-            // Read every tile after every action, but compare complete boards rather
-            // than making separate assertion and model calls for each cell.
-            bool[100] memory observed;
+            uint256 expectedTiles;
             for (uint256 t; t < 100; ++t) {
-                observed[t] = clubs.tileTaken(clubId, uint8(t % 10), uint8(t / 10));
+                if (occ[t]) expectedTiles |= uint256(1) << (16 * (t / 10) + t % 10);
             }
-            bytes32 expected = keccak256(abi.encode(occ));
-            assertEq(keccak256(abi.encode(observed)), expected, "tileTaken disagrees");
-            assertEq(handler.gridHash(clubId), expected, "model disagrees");
+            (uint256 tiles, uint256 walls) = handler.occupancy(clubId);
+            assertEq(tiles, expectedTiles, "floor occupancy disagrees");
+            assertEq(walls, 0, "floor placements must not occupy walls");
+            assertEq(handler.gridHash(clubId), keccak256(abi.encode(occ)), "model disagrees");
         }
     }
 
@@ -454,5 +460,18 @@ contract ClubsAdversarialInvariantTest is Test {
     function afterInvariant() external view {
         // Guard against a campaign that silently exercises nothing.
         assertGt(handler.successfulPlacements(), 0, "no placement succeeded");
+        // Keep exhaustive public-view checks as well as the per-action storage/model checks.
+        for (uint256 i; i < clubs.totalSupply(); ++i) {
+            uint256 clubId = clubs.tokenByIndex(i);
+            bool[100] memory observed;
+            for (uint256 t; t < 100; ++t) {
+                observed[t] = clubs.tileTaken(clubId, uint8(t % 10), uint8(t / 10));
+            }
+            assertEq(keccak256(abi.encode(observed)), handler.gridHash(clubId), "tileTaken disagrees");
+            for (uint8 pos; pos < 10; ++pos) {
+                assertFalse(clubs.wallTaken(clubId, 0, pos));
+                assertFalse(clubs.wallTaken(clubId, 1, pos));
+            }
+        }
     }
 }

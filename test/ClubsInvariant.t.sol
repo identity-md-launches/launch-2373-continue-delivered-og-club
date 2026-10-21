@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
+import {ClubsOccupancy} from "./helpers/ClubsOccupancy.sol";
 import {ClubsTestBase} from "./helpers/ClubsTestBase.sol";
 import {PepeMock} from "./helpers/PepeMocks.sol";
 import {OGClubClubs} from "../src/OGClubClubs.sol";
@@ -23,8 +24,8 @@ library ClubLayoutModel {
         bool[16][2] walls;
     }
 
-    /// @dev Read every public occupancy view, then compare whole boards in one assertion.
-    /// This keeps exhaustive checks after every action without a cheatcode call per cell.
+    /// @dev At the end of a sequence, cross-check every public occupancy view with the same
+    /// cell model used for the per-action whole-word storage checks.
     function readBoard(OGClubClubs clubs, uint256 clubId) internal view returns (Board memory board) {
         uint256 size = clubs.sizeOf(clubId);
         for (uint8 y; y < size; ++y) {
@@ -33,6 +34,19 @@ library ClubLayoutModel {
             }
             for (uint8 side; side < 2; ++side) {
                 board.walls[side][y] = clubs.wallTaken(clubId, side, y);
+            }
+        }
+    }
+
+    /// @dev Encode the independent cell model only for comparison with storage. Geometry and
+    /// overlap decisions still use booleans, not the production mask-building algorithm.
+    function pack(Board memory board) internal pure returns (uint256 floor, uint256 walls) {
+        for (uint256 cell; cell < 256; ++cell) {
+            if (board.floor[cell]) floor |= uint256(1) << cell;
+        }
+        for (uint256 side; side < 2; ++side) {
+            for (uint256 pos; pos < 16; ++pos) {
+                if (board.walls[side][pos]) walls |= uint256(1) << (side * 32 + pos);
             }
         }
     }
@@ -83,6 +97,13 @@ library ClubLayoutModel {
 }
 
 contract ClubsLayoutFuzzTest is ClubsTestBase {
+    ClubsOccupancy.Slots private occupancySlots;
+
+    function setUp() public override {
+        super.setUp();
+        occupancySlots = ClubsOccupancy.locate(stdstore, clubs, 1);
+    }
+
     function testFuzz_RandomLevelsWallsRotationsAndDesignsMatchIndependentModel(bytes32 seed, uint8 levelSeed) public {
         uint8 level = 1 + levelSeed % 4;
         vm.startPrank(alice);
@@ -135,8 +156,16 @@ contract ClubsLayoutFuzzTest is ClubsTestBase {
             assertEq(furniture.balanceOf(alice, item + 10), owned - (ok ? 1 : 0));
             assertEq(clubs.hasDesign(1, item + 10), designs[item]);
             assertEq(clubs.pieceCount(1), successes);
-            _checkBoard(board);
+            _checkStoredBoard(board);
         }
+        _checkBoard(board);
+    }
+
+    function _checkStoredBoard(ClubLayoutModel.Board memory board) private view {
+        (uint256 floor, uint256 walls) = ClubsOccupancy.read(clubs, occupancySlots);
+        (uint256 expectedFloor, uint256 expectedWalls) = ClubLayoutModel.pack(board);
+        assertEq(floor, expectedFloor, "floor occupancy disagrees with model");
+        assertEq(walls, expectedWalls, "wall occupancy disagrees with model");
     }
 
     function _checkBoard(ClubLayoutModel.Board memory board) private view {
@@ -167,6 +196,7 @@ contract ClubsHandler is Test {
     mapping(uint256 => uint256) public mintCount;
     mapping(uint256 => mapping(uint256 => bool)) public design;
     mapping(uint256 => ClubLayoutModel.Board) private _boards;
+    mapping(uint256 => ClubsOccupancy.Slots) private _occupancySlots;
 
     constructor(MockOG token_, OGClubFurniture furniture_, OGClubClubs clubs_, address admin_) {
         token = token_;
@@ -195,6 +225,7 @@ contract ClubsHandler is Test {
         } else {
             assertEq(clubs.mintClub(id), id);
             assertEq(clubs.ownerOf(id), payer);
+            _occupancySlots[id] = ClubsOccupancy.locate(stdstore, clubs, id);
             ++mintCount[id];
             _payment(cost);
         }
@@ -297,6 +328,10 @@ contract ClubsHandler is Test {
     function sale(bool open) external {
         vm.prank(admin);
         clubs.setSaleOpen(open);
+    }
+
+    function occupancy(uint256 id) external view returns (uint256 floor, uint256 walls) {
+        return ClubsOccupancy.read(clubs, _occupancySlots[id]);
     }
 
     function expectedBoardHash(uint256 id) external view returns (bytes32) {
@@ -415,9 +450,11 @@ contract ClubsInvariantTest is Test {
                 board = ClubLayoutModel.occupy(board, p);
                 ++perItem[piece.furnitureId];
             }
-            bytes32 actual = keccak256(abi.encode(ClubLayoutModel.readBoard(clubs, id)));
-            assertEq(actual, keccak256(abi.encode(board)), "occupancy views disagree with pieces");
-            assertEq(actual, handler.expectedBoardHash(id), "occupancy views disagree with model");
+            (uint256 floor, uint256 walls) = handler.occupancy(id);
+            (uint256 expectedFloor, uint256 expectedWalls) = ClubLayoutModel.pack(board);
+            assertEq(floor, expectedFloor, "floor occupancy disagrees with pieces");
+            assertEq(walls, expectedWalls, "wall occupancy disagrees with pieces");
+            assertEq(keccak256(abi.encode(board)), handler.expectedBoardHash(id), "pieces disagree with model");
         }
         for (uint256 item = 1; item <= 8; ++item) {
             assertEq(furniture.balanceOf(address(clubs), item), perItem[item]);
@@ -425,6 +462,19 @@ contract ClubsInvariantTest is Test {
         }
         assertEq(total, handler.ghostPieces());
         assertGt(total, 0);
+    }
+
+    function afterInvariant() external view {
+        // Public getter integration remains exhaustive, once per random history. Whole storage
+        // words (including cells outside the current room) are checked after every action above.
+        for (uint256 i; i < clubs.totalSupply(); ++i) {
+            uint256 id = clubs.tokenByIndex(i);
+            assertEq(
+                keccak256(abi.encode(ClubLayoutModel.readBoard(clubs, id))),
+                handler.expectedBoardHash(id),
+                "public occupancy views disagree with model"
+            );
+        }
     }
 
     function _modelPiece(OGClubClubs.Piece memory piece) private view returns (ClubLayoutModel.Placement memory) {
