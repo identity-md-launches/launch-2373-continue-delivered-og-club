@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
+import {PepeMock} from "./helpers/PepeMocks.sol";
+import {IDelegateRegistry} from "../src/interfaces/IDelegateRegistry.sol";
 
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -14,13 +16,13 @@ import {OGClubFarmVault} from "../src/OGClubFarmVault.sol";
 import {MockOG} from "../src/mocks/MockOG.sol";
 
 /// @dev An ERC-721 receiver that, inside the mint callback, places furniture into the club it was just
-///      given (allowed) and tries to mint again through both entry points (must fail).
+///      given (allowed) and tries to mint or upgrade again (must fail).
 contract PlacingReentrantReceiver is IERC721Receiver {
     OGClubClubs public immutable clubs;
     OGClubFurniture public immutable furniture;
     bool public placedInCallback;
     bool public mintAgainSucceeded;
-    bool public mintToAgainSucceeded;
+    bool public upgradeAgainSucceeded;
     bytes public mintAgainError;
 
     constructor(OGClubClubs clubs_, OGClubFurniture furniture_) {
@@ -30,19 +32,19 @@ contract PlacingReentrantReceiver is IERC721Receiver {
 
     function go() external returns (uint256) {
         clubs.token().approve(address(clubs), type(uint256).max);
-        return clubs.mintClub();
+        return clubs.mintClub(77);
     }
 
     function onERC721Received(address, address, uint256 id, bytes calldata) external returns (bytes4) {
         furniture.safeTransferFrom(address(this), address(clubs), 1, 1, abi.encode(id, uint8(5), uint8(5), uint8(0)));
         placedInCallback = true;
-        try clubs.mintClub() {
+        try clubs.mintClub(id) {
             mintAgainSucceeded = true;
         } catch (bytes memory err) {
             mintAgainError = err;
         }
-        try clubs.mintClubTo(address(this)) {
-            mintToAgainSucceeded = true;
+        try clubs.upgradeClub(id) {
+            upgradeAgainSucceeded = true;
         } catch {}
         return IERC721Receiver.onERC721Received.selector;
     }
@@ -60,6 +62,7 @@ contract ClubsAdversarialTest is Test {
     OGClubFurniture internal furniture;
     OGClubFarmVault internal vault;
     OGClubClubs internal clubs;
+    PepeMock internal pepes = new PepeMock();
 
     address internal admin = makeAddr("adv admin");
     address internal royalty = makeAddr("adv royalty");
@@ -71,24 +74,45 @@ contract ClubsAdversarialTest is Test {
         token = new MockOG(address(this));
         furniture = new OGClubFurniture(address(this), royalty);
         vault = new OGClubFarmVault(token, address(this));
-        clubs = new OGClubClubs(token, address(vault), PRICE, IERC1155(address(furniture)), admin, royalty);
+        clubs = new OGClubClubs(
+            token,
+            address(vault),
+            PRICE,
+            IERC1155(address(furniture)),
+            admin,
+            royalty,
+            pepes,
+            IDelegateRegistry(address(0)),
+            OGClubClubs.UpgradePrices(201, 401, 801)
+        );
         furniture.grantMinter(address(this));
         vm.startPrank(admin);
         clubs.setSaleOpen(true);
-        clubs.setFootprint(1, 1, 1);
-        clubs.setFootprint(2, 2, 1);
-        clubs.setFootprint(3, 2, 2);
-        clubs.setFootprint(4, 4, 4);
-        clubs.setFootprint(5, 3, 1);
+        clubs.setFootprint(1, 1, 1, false);
+        clubs.setFootprint(2, 2, 1, false);
+        clubs.setFootprint(3, 2, 2, false);
+        clubs.setFootprint(4, 4, 4, false);
+        clubs.setFootprint(5, 3, 1, false);
+        clubs.setFootprint(7, 1, 1, false);
+        clubs.setFootprint(8, 3, 1, false);
+        clubs.setFootprint(9, 3, 1, false);
+        clubs.setFootprint(10, 3, 1, false);
+        clubs.setFootprint(11, 2, 2, false);
+        clubs.setFootprint(12, 2, 1, false);
         vm.stopPrank();
+        pepes.mint(alice, 1);
+        pepes.mint(bob, 2);
+        pepes.mint(bob, 3);
+        pepes.mint(carol, 4);
+        pepes.mint(carol, 5);
         _fund(alice, 10 * PRICE);
         _fund(bob, 10 * PRICE);
-        for (uint256 id = 1; id <= 6; ++id) {
+        for (uint256 id = 1; id <= 12; ++id) {
             _stock(alice, id, 50);
             _stock(bob, id, 50);
         }
         vm.prank(alice);
-        assertEq(clubs.mintClub(), 1);
+        assertEq(clubs.mintClub(1), 1);
     }
 
     // ------------------------------------------------------------------ helpers
@@ -118,21 +142,21 @@ contract ClubsAdversarialTest is Test {
         uint256 countBefore = clubs.pieceCount(clubId);
         uint256 heldBefore = furniture.balanceOf(address(clubs), item);
         uint256 fromBefore = furniture.balanceOf(from, item);
-        (,,, bool lockedBefore) = clubs.footprintOf(item);
+        (,,, bool lockedBefore,) = clubs.footprintOf(item);
         vm.prank(from);
         vm.expectRevert(err);
         furniture.safeTransferFrom(from, address(clubs), item, 1, abi.encode(clubId, x, y, rot));
         assertEq(clubs.pieceCount(clubId), countBefore, "piece count changed on rejection");
         assertEq(furniture.balanceOf(address(clubs), item), heldBefore, "custody changed on rejection");
         assertEq(furniture.balanceOf(from, item), fromBefore, "sender balance changed on rejection");
-        (,,, bool lockedAfter) = clubs.footprintOf(item);
+        (,,, bool lockedAfter,) = clubs.footprintOf(item);
         assertEq(lockedAfter, lockedBefore, "lock changed on rejection");
     }
 
     function _expectRawRevert(address from, uint256 item, bytes memory data) internal {
         uint256 heldBefore = furniture.balanceOf(address(clubs), item);
         vm.prank(from);
-        vm.expectRevert();
+        vm.expectRevert(OGClubClubs.BadPlacementData.selector);
         furniture.safeTransferFrom(from, address(clubs), item, 1, data);
         assertEq(furniture.balanceOf(address(clubs), item), heldBefore);
     }
@@ -146,7 +170,7 @@ contract ClubsAdversarialTest is Test {
         _expectPlaceRevert(alice, 1, 1, 0, 10, 0, OGClubClubs.OutOfRoom.selector);
         _expectPlaceRevert(alice, 1, 1, 5, 5, 4, OGClubClubs.OutOfRoom.selector);
         _expectPlaceRevert(alice, 1, 1, 5, 5, 255, OGClubClubs.OutOfRoom.selector);
-        (,,, bool locked) = clubs.footprintOf(1);
+        (,,, bool locked,) = clubs.footprintOf(1);
         assertFalse(locked, "rejected attempts must not lock the footprint");
     }
 
@@ -155,7 +179,7 @@ contract ClubsAdversarialTest is Test {
         _expectPlaceRevert(alice, 1, 4, 6, 7, 0, OGClubClubs.OutOfRoom.selector);
         _place(alice, 1, 4, 6, 6, 0); // 4x4 covering 6..9 x 6..9
         _place(alice, 1, 1, 9, 0, 0);
-        _place(alice, 1, 1, 0, 9, 0);
+        _place(alice, 1, 7, 0, 9, 0);
         assertTrue(clubs.tileTaken(1, 9, 9));
         assertTrue(clubs.tileTaken(1, 6, 6));
         assertFalse(clubs.tileTaken(1, 5, 9));
@@ -170,9 +194,9 @@ contract ClubsAdversarialTest is Test {
         _expectPlaceRevert(alice, 1, 5, 9, 8, 3, OGClubClubs.OutOfRoom.selector);
 
         _place(alice, 1, 5, 9, 0, 1); // covers (9,0),(9,1),(9,2)
-        _place(alice, 1, 5, 7, 9, 2); // covers (7,9),(8,9),(9,9)
-        _place(alice, 1, 5, 8, 3, 3); // covers (8,3),(8,4),(8,5)
-        _place(alice, 1, 5, 2, 0, 0); // covers (2,0),(3,0),(4,0)
+        _place(alice, 1, 8, 7, 9, 2); // covers (7,9),(8,9),(9,9)
+        _place(alice, 1, 9, 8, 3, 3); // covers (8,3),(8,4),(8,5)
+        _place(alice, 1, 10, 2, 0, 0); // covers (2,0),(3,0),(4,0)
         assertTrue(clubs.tileTaken(1, 9, 2));
         assertFalse(clubs.tileTaken(1, 9, 3));
         assertTrue(clubs.tileTaken(1, 9, 9));
@@ -198,7 +222,7 @@ contract ClubsAdversarialTest is Test {
         // Neighbours of the door are fine.
         _place(alice, 1, 1, 2, 4, 0);
         _place(alice, 1, 3, 0, 2, 0); // (0..1, 2..3)
-        _place(alice, 1, 3, 0, 5, 0); // (0..1, 5..6)
+        _place(alice, 1, 11, 0, 5, 0); // (0..1, 5..6)
         assertFalse(clubs.tileTaken(1, 0, 4), "door tile reported as furniture");
         assertFalse(clubs.tileTaken(1, 1, 4), "door approach reported as furniture");
     }
@@ -225,7 +249,7 @@ contract ClubsAdversarialTest is Test {
         _expectPlaceRevert(alice, 1, 2, 5, 6, 2, OGClubClubs.TileTaken.selector); // (5,6),(6,6)
         // Touching edges is not overlapping.
         _place(alice, 1, 2, 7, 6, 2); // (7,6),(8,6)
-        _place(alice, 1, 2, 6, 1, 1); // (6,1),(6,2)
+        _place(alice, 1, 12, 6, 1, 1); // (6,1),(6,2)
         assertEq(clubs.pieceCount(1), 3);
     }
 
@@ -265,11 +289,11 @@ contract ClubsAdversarialTest is Test {
             );
         }
         assertEq(furniture.balanceOf(address(clubs), 1), 0);
-        (,,, bool locked) = clubs.footprintOf(1);
+        (,,, bool locked,) = clubs.footprintOf(1);
         assertFalse(locked);
         // A club minted later starts empty: nothing was recorded against its id in advance.
         vm.prank(bob);
-        assertEq(clubs.mintClub(), 2);
+        assertEq(clubs.mintClub(2), 2);
         assertEq(clubs.pieceCount(2), 0);
         assertFalse(clubs.tileTaken(2, 2, 2));
     }
@@ -320,16 +344,16 @@ contract ClubsAdversarialTest is Test {
 
     function test_UnfootprintedIdRejectedAndDoesNotLock() public {
         _expectPlaceRevert(alice, 1, 6, 2, 2, 0, OGClubClubs.NoFootprint.selector);
-        (uint8 w, uint8 h, bool set, bool locked) = clubs.footprintOf(6);
+        (uint8 w, uint8 h, bool set, bool locked,) = clubs.footprintOf(6);
         assertEq(w, 0);
         assertEq(h, 0);
         assertFalse(set);
         assertFalse(locked);
         vm.prank(admin);
-        clubs.setFootprint(6, 1, 4);
+        clubs.setFootprint(6, 1, 4, false);
         _place(alice, 1, 6, 2, 0, 0);
         assertTrue(clubs.tileTaken(1, 2, 3));
-        (,,, locked) = clubs.footprintOf(6);
+        (,,, locked,) = clubs.footprintOf(6);
         assertTrue(locked);
     }
 
@@ -347,7 +371,7 @@ contract ClubsAdversarialTest is Test {
         // Bob as operator for all of Alice's clubs.
         vm.prank(alice);
         clubs.setApprovalForAll(bob, true);
-        _place(bob, 1, 1, 3, 3, 0);
+        _place(bob, 1, 7, 3, 3, 0);
         vm.prank(alice);
         clubs.setApprovalForAll(bob, false);
         _expectPlaceRevert(bob, 1, 1, 4, 4, 0, OGClubClubs.NotClubOwner.selector);
@@ -371,7 +395,7 @@ contract ClubsAdversarialTest is Test {
 
     function test_ApprovalForOneClubDoesNotExtendToAnother() public {
         vm.prank(bob);
-        assertEq(clubs.mintClub(), 2);
+        assertEq(clubs.mintClub(2), 2);
         vm.prank(bob);
         clubs.approve(carol, 2);
         _stock(carol, 1, 5);
@@ -406,8 +430,8 @@ contract ClubsAdversarialTest is Test {
 
     function test_FootprintCanBeRevisedUntilFirstPlacementOnly() public {
         vm.prank(admin);
-        clubs.setFootprint(5, 1, 3);
-        (uint8 w, uint8 h, bool set, bool locked) = clubs.footprintOf(5);
+        clubs.setFootprint(5, 1, 3, false);
+        (uint8 w, uint8 h, bool set, bool locked,) = clubs.footprintOf(5);
         assertEq(w, 1);
         assertEq(h, 3);
         assertTrue(set);
@@ -416,40 +440,40 @@ contract ClubsAdversarialTest is Test {
         // A rejected placement does not lock.
         _expectPlaceRevert(alice, 1, 5, 0, 8, 0, OGClubClubs.OutOfRoom.selector);
         vm.prank(admin);
-        clubs.setFootprint(5, 4, 1);
+        clubs.setFootprint(5, 4, 1, false);
 
         // Placing in any club locks globally.
         vm.prank(bob);
-        clubs.mintClub();
+        clubs.mintClub(2);
         _place(bob, 2, 5, 0, 0, 0);
         vm.prank(admin);
         vm.expectRevert(OGClubClubs.FootprintLocked.selector);
-        clubs.setFootprint(5, 1, 1);
-        (w, h,, locked) = clubs.footprintOf(5);
+        clubs.setFootprint(5, 1, 1, false);
+        (w, h,, locked,) = clubs.footprintOf(5);
         assertEq(w, 4);
         assertEq(h, 1);
         assertTrue(locked);
         // Other ids unaffected.
         vm.prank(admin);
-        clubs.setFootprint(3, 1, 1);
+        clubs.setFootprint(3, 1, 1, false);
     }
 
     function test_FootprintBoundsAndOwnerOnly() public {
         vm.startPrank(admin);
         vm.expectRevert(OGClubClubs.BadFootprint.selector);
-        clubs.setFootprint(9, 0, 1);
+        clubs.setFootprint(9, 0, 1, false);
         vm.expectRevert(OGClubClubs.BadFootprint.selector);
-        clubs.setFootprint(9, 1, 0);
+        clubs.setFootprint(9, 1, 0, false);
         vm.expectRevert(OGClubClubs.BadFootprint.selector);
-        clubs.setFootprint(9, 5, 1);
+        clubs.setFootprint(9, 5, 1, false);
         vm.expectRevert(OGClubClubs.BadFootprint.selector);
-        clubs.setFootprint(9, 1, 255);
-        clubs.setFootprint(9, 4, 4);
-        clubs.setFootprint(type(uint256).max, 1, 1);
+        clubs.setFootprint(9, 1, 255, false);
+        clubs.setFootprint(9, 4, 4, false);
+        clubs.setFootprint(type(uint256).max, 1, 1, false);
         vm.stopPrank();
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
-        clubs.setFootprint(9, 1, 1);
+        clubs.setFootprint(9, 1, 1, false);
     }
 
     // ------------------------------------------------------------------ custody
@@ -474,20 +498,24 @@ contract ClubsAdversarialTest is Test {
         assertFalse(ok);
     }
 
-    function test_FullRoomRejectsEverythingElse() public {
+    function test_FullLevelOneFloorRejectsFurtherFloorPieces() public {
         // Fill all 98 usable tiles with 1x1 pieces.
         _stock(alice, 1, 60);
         uint256 placed;
         for (uint8 y; y < 10; ++y) {
             for (uint8 x; x < 10; ++x) {
                 if (y == 4 && x <= 1) continue;
-                _place(alice, 1, 1, x, y, 0);
+                uint256 item = 100 + placed;
+                vm.prank(admin);
+                clubs.setFootprint(item, 1, 1, false);
+                _stock(alice, item, 1);
+                _place(alice, 1, item, x, y, 0);
                 ++placed;
             }
         }
         assertEq(placed, 98);
         assertEq(clubs.pieceCount(1), 98);
-        assertEq(furniture.balanceOf(address(clubs), 1), 98);
+        assertEq(furniture.balanceOf(address(clubs), 100), 1);
         _expectPlaceRevert(alice, 1, 1, 0, 0, 0, OGClubClubs.TileTaken.selector);
         _expectPlaceRevert(alice, 1, 1, 0, 4, 0, OGClubClubs.BlocksDoor.selector);
     }
@@ -499,57 +527,48 @@ contract ClubsAdversarialTest is Test {
         token.mint(address(receiver), 5 * PRICE);
         _stock(address(receiver), 1, 1);
         uint256 supplyBefore = clubs.totalSupply();
+        pepes.mint(address(receiver), 77);
         uint256 id = receiver.go();
-        assertEq(id, 2);
+        assertEq(id, 77);
         assertEq(clubs.totalSupply(), supplyBefore + 1);
         assertTrue(receiver.placedInCallback());
         assertFalse(receiver.mintAgainSucceeded());
-        assertFalse(receiver.mintToAgainSucceeded());
+        assertFalse(receiver.upgradeAgainSucceeded());
         assertEq(
             receiver.mintAgainError(), abi.encodeWithSelector(ReentrancyGuard.ReentrancyGuardReentrantCall.selector)
         );
-        assertEq(clubs.pieceCount(2), 1);
+        assertEq(clubs.pieceCount(77), 1);
         assertEq(token.balanceOf(address(receiver)), 4 * PRICE);
         assertEq(token.balanceOf(address(clubs)), 0);
     }
 
-    function test_MintToContractsThatCannotReceiveReverts() public {
-        uint256 aliceBefore = token.balanceOf(alice);
-        vm.startPrank(alice);
-        vm.expectRevert(abi.encodeWithSelector(IERC721Errors.ERC721InvalidReceiver.selector, address(clubs)));
-        clubs.mintClubTo(address(clubs));
-        vm.expectRevert(abi.encodeWithSelector(IERC721Errors.ERC721InvalidReceiver.selector, address(furniture)));
-        clubs.mintClubTo(address(furniture));
-        vm.expectRevert(OGClubClubs.ZeroAddress.selector);
-        clubs.mintClubTo(address(0));
-        vm.stopPrank();
-        assertEq(token.balanceOf(alice), aliceBefore);
+    function test_PepeHolderWithoutReceiverRollsBack() public {
+        address nonReceiver = address(furniture);
+        pepes.mint(nonReceiver, 88);
+        _fund(nonReceiver, PRICE);
+        vm.prank(nonReceiver);
+        vm.expectRevert(abi.encodeWithSelector(IERC721Errors.ERC721InvalidReceiver.selector, nonReceiver));
+        clubs.mintClub(88);
+        assertEq(token.balanceOf(nonReceiver), PRICE);
+        assertFalse(clubs.clubsMinted(88));
         assertEq(clubs.totalSupply(), 1);
-        vm.prank(alice);
-        assertEq(clubs.mintClub(), 2, "failed mints must not consume ids");
     }
 
-    function test_MintClubToPaysFromCallerAndClosingSaleStopsBothEntryPoints() public {
+    function test_MintPaysFromCallerAndClosedSaleStopsMinting() public {
         uint256 bobBefore = token.balanceOf(bob);
-        uint256 carolBefore = token.balanceOf(carol);
         vm.prank(bob);
-        uint256 id = clubs.mintClubTo(carol);
-        assertEq(clubs.ownerOf(id), carol);
+        uint256 id = clubs.mintClub(2);
+        assertEq(clubs.ownerOf(id), bob);
         assertEq(token.balanceOf(bob), bobBefore - PRICE);
-        assertEq(token.balanceOf(carol), carolBefore);
-
         vm.prank(admin);
         clubs.setSaleOpen(false);
-        vm.startPrank(bob);
+        vm.prank(bob);
         vm.expectRevert(OGClubClubs.SaleClosed.selector);
-        clubs.mintClub();
-        vm.expectRevert(OGClubClubs.SaleClosed.selector);
-        clubs.mintClubTo(carol);
-        vm.stopPrank();
+        clubs.mintClub(3);
         vm.prank(admin);
         clubs.setSaleOpen(true);
         vm.prank(bob);
-        assertEq(clubs.mintClub(), 3);
+        assertEq(clubs.mintClub(3), 3);
     }
 
     function test_ExactlyPriceAllowanceAndBalanceSucceedOneWeiShortFails() public {
@@ -558,25 +577,35 @@ contract ClubsAdversarialTest is Test {
         token.approve(address(clubs), PRICE - 1);
         vm.prank(carol);
         vm.expectRevert();
-        clubs.mintClub();
+        clubs.mintClub(4);
         vm.prank(carol);
         token.approve(address(clubs), PRICE);
         vm.prank(carol);
-        clubs.mintClub();
+        clubs.mintClub(4);
         assertEq(token.balanceOf(carol), 0);
         assertEq(token.allowance(carol, address(clubs)), 0);
         vm.prank(carol);
         token.approve(address(clubs), PRICE);
         vm.prank(carol);
         vm.expectRevert();
-        clubs.mintClub();
+        clubs.mintClub(5);
     }
 
     /// forge-config: default.fuzz.runs = 512
     function testFuzz_SplitForAnyPrice(uint256 price, uint8 mints) public {
         price = bound(price, 1, type(uint128).max);
         uint256 n = bound(mints, 1, 8);
-        OGClubClubs c = new OGClubClubs(token, address(vault), price, IERC1155(address(furniture)), admin, royalty);
+        OGClubClubs c = new OGClubClubs(
+            token,
+            address(vault),
+            price,
+            IERC1155(address(furniture)),
+            admin,
+            royalty,
+            pepes,
+            IDelegateRegistry(address(0)),
+            OGClubClubs.UpgradePrices(201, 401, 801)
+        );
         vm.prank(admin);
         c.setSaleOpen(true);
         address payer = makeAddr("fuzz payer");
@@ -586,8 +615,9 @@ contract ClubsAdversarialTest is Test {
         uint256 burnBefore = token.balanceOf(c.BURN_ADDRESS());
         uint256 vaultBefore = token.balanceOf(address(vault));
         for (uint256 i; i < n; ++i) {
+            pepes.mint(payer, i + 1000);
             vm.prank(payer);
-            assertEq(c.mintClub(), i + 1);
+            assertEq(c.mintClub(i + 1000), i + 1000);
         }
         uint256 burned = token.balanceOf(c.BURN_ADDRESS()) - burnBefore;
         uint256 toVault = token.balanceOf(address(vault)) - vaultBefore;
@@ -663,7 +693,7 @@ contract ClubsAdversarialTest is Test {
         assertEq(clubs.pieceCount(1), 1);
         vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, admin));
-        clubs.setFootprint(6, 1, 1);
+        clubs.setFootprint(6, 1, 1, false);
     }
 
     function test_InterfacesAndImmutables() public view {

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
+import {PepeMock} from "./helpers/PepeMocks.sol";
+import {IDelegateRegistry} from "../src/interfaces/IDelegateRegistry.sol";
 
 import {Test} from "forge-std/Test.sol";
 import {MockOG} from "../src/mocks/MockOG.sol";
@@ -13,6 +15,7 @@ import {HeaderBuilder} from "./helpers/HeaderBuilder.sol";
 
 /// @notice Reproductions of the imported audit; existing contracts must remain unchanged.
 contract ImportedAuditTest is Test {
+    PepeMock internal pepes = new PepeMock();
     MockOG internal token;
     OGClubFurniture internal furniture;
     OGClubFarmVault internal vault;
@@ -71,13 +74,22 @@ contract ImportedAuditTest is Test {
         vm.warp(block.timestamp + 1 days);
         assertEq(staking.pointsOf(alice), 1e30);
         OGClubClubs clubs = new OGClubClubs(
-            token, address(vault), 100_000e18, IERC1155(address(furniture)), address(this), address(this)
+            token,
+            address(vault),
+            100_000e18,
+            IERC1155(address(furniture)),
+            address(this),
+            address(this),
+            pepes,
+            IDelegateRegistry(address(0)),
+            OGClubClubs.UpgradePrices(201, 401, 801)
         );
         clubs.setSaleOpen(true);
         vm.startPrank(alice);
         token.mint(alice, clubs.price());
         token.approve(address(clubs), clubs.price());
-        clubs.mintClub();
+        pepes.mint(alice, 1);
+        clubs.mintClub(1);
         vm.stopPrank();
         assertEq(clubs.ownerOf(1), alice);
         assertEq(token.balanceOf(address(vault)), 50_000e18);
@@ -116,13 +128,22 @@ contract ImportedAuditTest is Test {
 
     function test_Audit9dcac50_ClubsNowWorkWithoutRaffleBootstrapRoles() public {
         OGClubClubs clubs = new OGClubClubs(
-            token, address(vault), 100_000e18, IERC1155(address(furniture)), address(this), address(this)
+            token,
+            address(vault),
+            100_000e18,
+            IERC1155(address(furniture)),
+            address(this),
+            address(this),
+            pepes,
+            IDelegateRegistry(address(0)),
+            OGClubClubs.UpgradePrices(201, 401, 801)
         );
         clubs.setSaleOpen(true);
         vm.startPrank(alice);
         token.mint(alice, 100_000e18);
         token.approve(address(clubs), 100_000e18);
-        clubs.mintClub();
+        pepes.mint(alice, 1);
+        clubs.mintClub(1);
         vm.stopPrank();
         assertFalse(furniture.bootstrapped());
         assertFalse(staking.bootstrapped());

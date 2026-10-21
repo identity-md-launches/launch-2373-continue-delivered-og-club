@@ -1,113 +1,126 @@
-# OG Club Clubs launch adaptation
+# OG Club launch adaptation
 
-This assignment adds OGClubClubs to the delivered raffle repository at
-`fabe4c1d998206e1b1bdf9bdf0f03fb6773a7707`. Every pre-existing Solidity source is
-preserved byte for byte, including furniture, staking, farm vault, raffle,
-MockOG and both libraries. Build configuration and dependencies are unchanged;
-no packages, submodules, network dependencies or new production libraries were
-added. No deployment, broadcast, signing or factory call was performed.
+This revision continues the delivered clubs project at
+`292e20dec8afa05dc98367c8a9f47bd39a4b66a5`. Only OGClubClubs changes among the
+existing application contracts. Furniture, farm vault, staking, raffle, MockOG,
+both libraries and the original raffle deployment script retain their behavior
+and source. Build configuration and vendored dependencies are unchanged. No
+packages, submodules, invented production addresses, keys or initialization machinery
+were added. No signing, broadcasting or live deployment was performed.
 
-The supplied factory and ownership checks and pinned security references were
-read. OGClubClubs has one nonpayable constructor with six static arguments,
-explicit ownership and royalty beneficiary, no dependency calls during
-construction, no linking requirements, and no proxy or upgrade mechanism.
-The new deployed runtime is 12,680 bytes, below the 24,576-byte limit. Tests
-apply the protected check's reachable-opcode rule to its runtime.
+The supplied protected factory/ownership tests and pinned security inputs were
+read. Constructors remain nonpayable and do not call dependencies or require
+code at their addresses. Owners and royalty recipients are explicit constructor
+arguments, never the factory or tx.origin. All library calls remain internal.
+The seven-contract Sepolia manifest fits the factory's eight-contract limit.
 
 ## Changes and reasons
 
-| File | Change and requirement |
+| Files | Change and requirement |
 | --- | --- |
-| `src/OGClubClubs.sol` | Added the requested ERC-721 rooms with enumeration, ERC-2981 royalties, ERC-4906 notifications, ERC-1155 receiving, Ownable2Step and ReentrancyGuard. Constructor parameters fix token, vault, price and furniture forever, reject zero values and make no dependency calls. |
-| `src/OGClubClubs.sol` | Added paid minting to the payer or a recipient, starting at ID 1 and with no cap. Transfers go directly to the specified burn sink and vault, odd-price dust goes to the vault, and both recipients' final balance increases must be exact. The payer's debit is also checked to reject extra sender fees. Receiver/payment failure reverts the entire mint. A predicted self-vault is rejected so no payment can be retained by clubs. |
-| `src/OGClubClubs.sol` | Added bounded 10x10 placement validation, reserved door tiles, rotations, overlap checks, ordered pieces, occupancy views and per-ID footprint locks. Authorization follows the brief's `from` rule and the existing furniture transfer approvals. The receiver rejects wrong assets, amounts, malformed data and batch-hook calls. There is no furniture outflow, approval, relocation or removal function. |
-| `src/OGClubClubs.sol` | Added owner sale control, unused-footprint configuration, URI-prefix configuration and permanent freeze, and royalties initially 500 bps with a 1000-bps cap. Ownership gives no free mint, club seizure, burn or withdrawal. Metadata changes and freeze notify the full token range; successful placements notify their club. |
-| `script/DeployClubs.s.sol` | Added Sepolia/local and mainnet/local preparation scripts. Sepolia creates the existing MockOG, furniture and farm vault with clubs priced at 100_000e18, configures JSON footprints, then opens the sale. Mainnet uses the six specified environment inputs and existing dependencies, configures footprints and leaves the sale closed. All owners are explicit. Both print addresses and ABI constructor arguments. They read no private keys and never temporarily own applications. |
-| `script/club-footprints.json` | Added the JSON catalogue input as an explicit empty array. No furniture IDs or dimensions were supplied; owner-settable footprints are the brief's supported configuration mechanism. Populate with real catalogue rows `[id,w,h]`. Parser checks row shape, unsigned values, dimension bounds and duplicate IDs before deployment. File contents enter the scripts through `FOOTPRINTS_JSON`, avoiding any change to protected Foundry filesystem permissions. |
-| `launch.json` | Preserved the five original deployments and appended OGClubClubs with backward references to MockOG, farm vault and furniture, price 100000000000000000000000, and `$owner` for owner and royalty receiver. The explicit task asks for this manifest, overriding the quoted background that deferred it. Notes distinguish constructor-only deployment from optional owner operations and the Sepolia script, and retain the original raffle handoff constraints. |
-| `README.md` | Added club economics, placement ABI and authorization, renderer views, permanent custody, metadata/royalty powers, scripts, catalogue configuration, factory handoff, known library behavior and the current fuzz seed. Existing raffle documentation remains, with independent draw monitoring and first-grant order identified as required. |
-| `test/helpers/ClubsTestBase.sol` | Added shared fixtures using the real unchanged furniture, farm vault and MockOG, with an odd club price. No external accounts, RPC or credentials are needed. |
-| `test/OGClubClubs.t.sol` | Added mint/split, events, sequential IDs, safe delivery, approvals/balances, taxed/false/no-return tokens, recipient over/under-credit, cross-leg balance mutation, receiver/token reentrancy, enumeration and admin tests. Includes all zero constructor arguments, royalty bounds, URI freeze, ownership handover and absence of privileged mint/seizure/burn/withdraw paths. Fuzzes price and mint count for conservation. |
-| `test/ClubsPlacement.t.sol` | Added real furniture placement and event/view tests, all four rotations, dimensions, both approval mechanisms, revoked permissions, club transfers, failed placement atomicity, malformed data, wrong asset/amount, batches, missing clubs, per-ID locks and permanent custody. Exercises all 98 usable cells and separately checks the 100-piece guard with test-only synthetic storage. |
-| `test/ClubsInvariant.t.sol` | Added an independent cell-by-cell layout oracle for random placement sequences and stateful handlers for purchases, transfers, placements and sale changes. Checks accepted geometry, rejected-state preservation, payment conservation, zero protocol OG custody, and per-ID furniture custody matching every recorded piece. |
-| `test/ClubsDeployment.t.sol` | Added script tests, JSON validation, chain guards, price/owner/dependency/royalty checks, absent-dependency constructor tests, CREATE2 factory deployment and runtime size/opcode checks. Confirms Sepolia opens, mainnet stays closed and club scripts do not consume the furniture bootstrap grant. |
-| `test/ImportedAudit.t.sol` | Added permanent reproductions of all three existing-behavior audit observations, plus a regression proving the new clubs contract works without the raffle's roles. Existing application behavior is preserved as expressly required. |
-| `test/test_launch.py` | Extended the original manifest check to the sixth application and its exact constructor values. Retains ABI/static argument, dependency ordering and owner checks. |
-| `ADAPTATION.md` | Replaced the previous assignment's historical notes with this assignment's changes, evidence and limits. |
+| `src/OGClubClubs.sol` | Replaced sequential/gifting mint entry points with `mintClub(pepeId)`. The current Swarm Pepe holder or its delegate.xyz v2 delegate pays and receives exactly that ID. Immutable `pepes` is nonzero; immutable `delegates` may be zero to disable delegation. Lifetime `clubsMinted` state survives both kinds of NFT transfer. `ClubMinted` includes pepeId. |
+| `src/interfaces/IDelegateRegistry.sol` | Minimal local declaration of the exact v2 ERC-721 authorization query from the brief, including rights=0. No new dependency or external library is needed. |
+| `src/OGClubClubs.sol` | Added levels 1..4, holder/operator paid upgrades, immutable positive prices, level/size/next-price views, `MaxLevel`, `ClubUpgraded` and metadata updates. Mint and upgrade share the unchanged direct-transfer split and exact final receipt/payer-debit checks. Sale control continues to gate new mints only. |
+| `src/OGClubClubs.sol`, `launch.json` | Used the factory's supported static `UpgradePrices` struct (`level2`, `level3`, `level4`) to represent the requested three-price array. The constructor has nine top-level ABI inputs and eleven flattened static fields. A fixed array is not among the supplied factory reference's supported types; expanding a uint256[3] argument into three manifest entries caused the prior rejection. The tuple's fields are flattened in declaration order as the reference requires, and stored in three Solidity immutable fields. No price setter exists. |
+| `src/OGClubClubs.sol` | Replaced every floor stride/bound with fixed stride 16 and per-club size. Door bits are 64/65. Added independent uint32 occupancy for both back walls, wall dimensions/placement validation, wall flag in pieces/events/footprint views, and a globally locked wall flag. Room growth preserves all old coordinates. Added wall occupancy view for renderers and tests. |
+| `src/OGClubClubs.sol` | Added permanent per-club design membership and `AlreadyHasDesign`. Duplicate-design rejection also applies at full capacity. Set the reachable maximum to 285 (254 floor + 31 wall). Replaced empty/canonical-decoder failures with `BadPlacementData`, including wrong length and uint8 words exceeding 255. |
+| `src/OGClubClubs.sol` | Rejects vault aliases with the burn sink, payment token or furniture, retaining the existing self-vault rejection and exact payment checks. Full-range metadata events now begin at zero because Pepe ID zero can exist. Existing custody, ERC-721 approvals/enumeration, ownership, URI freeze and royalty behavior is preserved. |
+| `src/mocks/MockSwarmPepe.sol` | Added the requested Sepolia mock ERC-721 with public `mint(pepeId)` to the caller. There is no admin, external constructor dependency or initializer. Duplicate IDs fail through ERC-721. |
+| `script/DeployClubs.s.sol` | Sepolia additionally deploys mock Pepes, uses the supplied real v2 registry address and 200_000e18/400_000e18/800_000e18 upgrade prices. JSON gains a numeric wall flag. Both scripts print addresses and ABI constructor arguments. |
+| `script/DeployClubs.s.sol` | Mainnet takes SWARM_PEPES, DELEGATE_REGISTRY and a three-value comma-separated UPGRADE_PRICES from env. It checks FARM_VAULT.token() against OG_TOKEN before starting broadcast, deploys using DEPLOYER_KEY, passes OWNER directly to the constructor, and leaves owner-only footprint/sale calls as printed calldata. This works when OWNER is a Safe; no Safe address is used as broadcaster. |
+| `script/club-footprints.json` | Added six Sepolia sample rows with the wall column, including three wall widths. These are explicitly testnet examples, not a claimed mainnet catalogue. Mainnet accepts the owner's actual rows or an empty owner-settable catalogue. |
+| `launch.json` | Retained the original five deployments and their constructor values; inserted MockSwarmPepe before clubs, added Pepe/registry/static-price fields, and updated notes. Both mocks are Sepolia-only. Raffle first grants remain explicit owner steps. The manifest is supplied because the task explicitly requests it, overriding the quoted background's deferral. |
+| `README.md`, `test/ADDITIONAL_COVERAGE.md` | Documents eligibility, IDs, delegation, levels/prices, floor/wall ABI and geometry, design uniqueness, errors/views/events, factory tuple encoding, immutable custody, operator rights, Safe deployment, Sepolia-only mocks, catalogue samples and supplied fuzz seed. Existing unrelated protocol documentation is preserved. |
+| `test/helpers/ClubsTestBase.sol`, `test/helpers/PepeMocks.sol` | Added offline Pepe ownership and registry fixtures. Existing fixtures supply explicit Pepe eligibility and upgrade prices. Test-only keys/addresses remain confined to tests; production dependencies come from manifest references or the operator's env. |
+| `test/OGClubClubs.t.sol`, `test/ClubsAdversarial.t.sol`, `test/ClubsPlacement.t.sol` | Adapted existing tests to Pepe IDs, wall-aware footprint APIs and distinct designs. Retained payment failure/reentrancy, authorization, custody, ownership, royalty, metadata, receiver and geometry coverage. Replaced the synthetic unreachable cap test with 285 real distinct placements. Added constructor-alias and named malformed-data regressions. |
+| `test/ClubsLaunchRules.t.sol` | Added holder/delegate/revocation/disabled-registry tests; rights/collection/current-holder binding; repeat mint after both NFT transfers; sparse/zero/max IDs; positive prices; exact upgrades/events/operator payment, receipt rollback and reentrancy; unchanged old tiles and newly available front cells; both walls/widths/end bounds/door/overlap/y/side rules; flag locks and per-club design uniqueness through transfer. |
+| `test/ClubsInvariant.t.sol` | Uses an independent cell-by-cell floor/wall model. Fuzzes levels, dimensions, positions, rotations and repeated designs, comparing every occupancy view after successes and failures. Stateful sequences include sparse-ID minting, both NFT transfers, repeat mint attempts, upgrades, sale changes and placement. Checks lifetime mint counts, recorded-payment conservation, zero protocol OG custody and exact furniture custody. |
+| `test/ClubsAdversarialInvariant.t.sol` | Retained the independent multi-actor approval/operator/footprint-change model, updating its Pepe eligibility and duplicate-design oracle. This complements the new level/wall model without changing pre-existing protocol invariants. |
+| `test/ClubsDeployment.t.sol` | Tests Sepolia dependencies/prices/registry, mock public mint, JSON flags, mainnet vault mismatch before deployment, deployment by a separate key with contract owner, owner configuration handoff, empty-chain CREATE2, flat manifest word/tuple equivalence and bounded opcode-safe runtime. |
+| `test/test_launch.py` | Validates the seven entries against compiler ABIs, flattening supported static tuples and explicitly rejecting constructor arrays. Checks argument order, counts, owner/dependency references, Sepolia-only labeling and preserved raffle handoff. This rejects the previous fixed-array/eleven-word mismatch. |
+| `test/ImportedAudit.t.sol` | Only adapts club construction and Pepe eligibility in the earlier audit reproductions. Existing raffle-role, MockOG and draw-window observations remain covered and unchanged. |
 
-## Imported audit disposition
+## Imported review findings: reproduction and disposition
 
-No reported observation was dismissed as unreproduced. The three observations
-about existing contracts reproduced; the missing-clubs observation matched the
-initial source inventory and is resolved by this delivery. The explicit request
-to keep every existing contract exactly as it is governs the disposition of the
-first three findings: their trust/operational assumptions remain, with tests and
-handoff documentation, rather than changing their economics or protocol.
+Before editing OGClubClubs or its script, five scratch tests ran against the
+original implementation and passed, confirming all six low findings. Their
+assertions covered the original unwanted behavior; permanent delivered tests
+now assert the corrected behavior. No low finding was dismissed as unreproduced.
+The supplied seventh item was informational, not a failure in the original.
 
-| Audit ID | Reproduction and resolution |
+| Finding | Reproduction and resolution |
 | --- | --- |
-| `2fa7888ddf6ea684bc1feb4619a3326b1a6a6d1f1bf685ea7ef4703a625ae701` | `test_Audit2fa7888_RaffleNeedsFirstGrantsWrongTargetConsumesBootstrap` reproduces NotSpender before owner setup, immediate bootstrap consumption by the wrong first recipient, the seven-day wait in both permission systems and successful activation at maturity. Existing constructors cannot grant roles to a later raffle address. The README and manifest retain first grant to the confirmed raffle, verification of both roles, and the launch-blocking order. No predicted-address initializer or changes to existing contracts are introduced. Clubs need neither role, and their scripts leave the bootstrap unused. |
-| `1ecd3a75141b202739f6db632edd18ca37dc402ce11df26279835bcfbcd6ca37` | `test_Audit1ecd3a7_AnyoneCanMintTestnetStakeAndBuyClubs` confirms arbitrary 1e30 MockOG mint/stake/points and purchase of a club with freely minted tokens. This is the explicitly requested Sepolia mock, not production currency. Its code remains unchanged. The manifest is labeled Sepolia-only; the mainnet club script creates no mock and takes the actual OG token, furniture and vault as inputs. |
-| `07e7433c587c3a0d935567b6ddf30b135eac7385e5ce4dcfb4d625b25efa167b` | `test_Audit07e7433_TargetExpiresAndCanBeReplacedButDrawnSeedIsFinal` confirms retarget rejection at target+256, loss of the first target at +257, a fresh target and seed, and finality once drawn. This is existing documented raffle behavior, retained under the preservation requirement. The runbook requires independent monitoring and drawing inside the live window; it does not claim monitoring removes validator influence or censorship risk. |
-| `9dcac5013e4c34d8b21a8f314ea66323744cbcfebe8c03bacad038ff3774a923` | OGClubClubs was absent from the initial sources and manifest. It is now implemented, tested and appended to the manifest. `test_Audit9dcac50_ClubsNowWorkWithoutRaffleBootstrapRoles` proves a paid club mint while both legacy bootstrap flags remain unset. Tests additionally cover furniture-level operators, exact recipient balances, malformed data, batch rejection and farm vault revenue. |
+| `642d342a02e060d86bdba79fb4dfe0acf9befc4a4c842e7c4c7ca58fbff92b3a` | Original burn-sink vault deployed, then mint reverted `UnexpectedTokenDebit`. Constructor now rejects it. Covered by `test_ConstructorRejectsBurnTokenAndFurnitureVaultAliases`. |
+| `3ec8e3eba66258f883538c2b81233cc933e2cf5777fb6b636b0702ae82c157ea` | Original token and furniture vault aliases accepted a price-10 mint and each received five unrecoverable units. Both now revert during construction, covered by the same alias test. |
+| `413e7cfab61a9849e69b891f06ac417a03a43a5820d42cb168e59349b144363e` | Original mainnet helper accepted a vault for a second ERC-20; the OG payment reached that vault while its configured token balance stayed zero. `test_MainnetScriptRejectsWrongVaultTokenBeforeDeploying` checks the mismatch error and unchanged deployer nonce/no deployed code. |
+| `803caf33f74b6dba0bfbf3c576f9fa3312d0bd72b5f9568afc75bc89a7d60c94` | Original 129-byte placement surfaced `ERC1155InvalidReceiver(clubs)`. Both wrong-length and noncanonical-word cases now bubble `BadPlacementData`; placement/adversarial tests verify custody, layout and footprint locks stay unchanged. |
+| `f3c8a53f94e3aaf3329a1c7bdd12dacadd10fa5b7af12ad4454e9b2bce68e0f2` | The original script's resulting CREATE address matched OWNER's nonce, confirming OWNER was its broadcaster; its owner-only setup calls also required that identity. A Safe has no EOA signing key. The regression checks CREATE from a separate test deployer key, a contract as owner, unconfigured/closed state, and later owner calls. No live Safe/key was needed or used. |
+| `ab2524ab2b1ae9e0e84ede568fc3a5cbde891637cbdccbb83424baa60a59e025` | Original room filled 98 floor cells with no way to reach MAX_PIECES=100; the next attempt returned a geometry error. `test_ClubFullIsReachedBy285DistinctRealPieces` now fills 254 floor cells plus 31 wall positions and rejects a new design as ClubFull. |
+| `88fb1d026f3d9ca055ce96c814dd734a54a269ed014a8e3f8400f50f2ef9c431` | Not a defect in the delivered 10x10 layout: the original three stride sites agreed. All are updated together. Fixed-stride regression places (4,6), rejects actual door cells at every level, and preserves prior tiles through upgrades; fuzz/stateful models check all occupied positions. |
 
-## Deliberate boundaries and launch handoff
+## Preserved handoff and limits
 
-- The constructor always starts with a closed sale, empty URI and no footprints,
-  as requested. A constructor-only factory cannot additionally run the Sepolia
-  script's owner actions. The manifest makes this explicit: the owner configures
-  real footprints and metadata and opens the sale when ready. The script's
-  ordinary owner calls are not an initializer or factory privilege.
-- OWNER is the script broadcaster for configuration. A contract owner such as a
-  Safe must execute those calls through its own authorization flow after the
-  constructor deployment. No script impersonation can authorize real on-chain
-  transactions from a Safe.
-- Two permanently reserved door tiles leave only 98 usable cells. A valid room
-  cannot reach 100 pieces; the explicit 100-piece cap is defensive. The cap test
-  uses a storage cheat solely to exercise that otherwise unreachable branch.
-- OpenZeppelin 5.0.2 routes singleton ERC-1155 batches to the single receiver
-  hook. The receiver cannot identify the original transfer entry point. A
-  singleton with valid data is recorded as one permanent placement; direct
-  batch-hook calls, empty batches and multi-item batches revert. This behavior
-  is tested and documented without modifying the protected dependency or the
-  unchanged furniture contract.
-- Permanent metadata freeze means the URI prefix, not the layout or content at
-  a mutable URL. Placements remain possible and emit MetadataUpdate. An unused
-  footprint can still be configured; a used footprint can never change.
-- Zero OG custody is an invariant of mint/placement/transfer/admin operations,
-  not a claim that ERC-20 donations can be prevented. Unsolicited tokens have no
-  recovery path. Furniture custody is exact with the real immutable furniture
-  contract; malicious replacement token behavior is not assumed trustworthy.
-- MockOG remains testnet-only. Mainnet inputs are intentionally operator-provided
-  environment parameters, not invented deployment addresses. No deployment key,
-  actual production token address or unpublished furniture catalogue is needed
-  to build, test or constructor-deploy the application.
+- The raffle's FIRST `grantMinter(raffle)` and FIRST `grantSpender(raffle)` are
+  still owner operations. Neither club constructor nor script consumes them.
+  The factory performs no post-construction initialization calls.
+- Sepolia script owner actions still use its existing EOA OWNER broadcast flow.
+  A Safe can use the factory handoff or the mainnet script's separated deployer
+  flow, then configure clubs through its own authorization. Mainnet stays closed.
+- The supplied delegate.xyz registry address is configured, not fabricated. No
+  live-chain code or delegation check was made here. Direct holders work without
+  registry calls; the deployment service should confirm the configured registry
+  exists before advertising delegated minting.
+- MockOG's unrestricted mint remains unchanged and Sepolia-only. MockSwarmPepe
+  is likewise a public testnet faucet. Mainnet deploys neither mock.
+- Furniture operators can permanently place a holder's furniture. Club operators
+  can upgrade at their own expense. Ownership/admin powers otherwise remain the
+  requested sale, footprint, URI and royalty settings, with two-step transfer.
+- The protocol's zero-OG-custody invariant excludes unsolicited donations,
+  rebases and dishonest token implementations. No recovery sweep was added.
+- Existing singleton ERC-1155 batch behavior and raffle draw-window/retarget
+  behavior are preserved and documented; neither is redesigned by this work.
+- No Slither, Mythril, explorer verification, RPC fork or live deployment is
+  claimed. The local tests exercise the supplied protected constructor/owner/
+  runtime properties without launch-service environment inputs.
 
 ## Validation
 
-The original tree passed 119 tests with the assignment's seed before changes.
-All new deterministic, fuzz and stateful tests use the existing configuration;
-no via-IR switch or reduced fuzz/invariant settings were introduced. The club
-stateful suite executes 128 runs at depth 64, with 8,192 handler calls and no
-unexpected reverts. The layout fuzz test checks 48 attempted placements per case
-against the independent grid, including rejected-state preservation.
+The local-check repair shortens `launch.json` notes from 5,060 to 3,191 characters,
+below the manifest's 4,000-character maximum. Deployment entries, constructor
+arguments, Sepolia-only mock labels and the raffle's owner handoff are preserved.
+`test/test_launch.py` now checks the notes type and length as well as the ABI.
 
-Final build, complete test, formatting and manifest results are recorded below.
-No Slither, Mythril, live-chain simulation or explorer verification is claimed.
-The supplied protected harness itself requires launch-service environment inputs;
-local tests reproduce its constructor, owner and runtime properties without
-reading or inventing those service inputs.
+The reported test run stopped at 600 seconds without a failed assertion. To
+reduce repeated assertion overhead, `test/ClubsInvariant.t.sol` now reads every
+floor/wall occupancy view into a complete board and compares its hash with both
+the independent model and the board reconstructed from pieces. The handler
+returns its whole model hash in one call instead of one call per cell. These
+comparisons still run after every fuzz placement and every stateful action;
+the geometry, door, design, custody and payment assertions are retained. No
+application code, fuzz-run count, invariant depth or build setting is changed
+by this repair. `test/ClubsAdversarialInvariant.t.sol` uses the same complete-board
+comparison for its independent level-one approval/operator model, preserving
+every tile observation after every action and its 64 runs of depth 64.
 
-| Final check | Result |
+The exact supplied fuzz seed is
+`0xe91e85dcb3160b998a496c6801541e7340f6ef9be3d10de0d176fe7f8ec66c2d`.
+No configuration, fuzz-run count or invariant-depth reduction was made.
+The final checks use the repository's own configuration. No RPC, network fetch,
+external account, env file or launch-service credentials are required.
+
+| Check | Result |
 | --- | --- |
-| `forge build` | Passed with the project's existing configuration. |
-| `FOUNDRY_FUZZ_SEED=0xf236bdc08e156b1d158e98af99b4b7c3d0e8797c8771799ec73b9c326a3f8fff forge test` | 165 passed, 0 failed, 0 skipped across 25 suites; includes all original tests. |
-| `forge fmt --check` | Passed. Only the newly added Solidity files were formatted. |
-| `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s test -p 'test_*.py' -v` | All 6 tests passed, including the six-contract manifest/ABI check. |
-| SHA-256 comparison against the initial source/config snapshot | Every pre-existing Solidity source and `foundry.toml` unchanged. |
+| `forge build` | Passed with Solidity 0.8.26 and the unchanged configuration. |
+| Seeded club invariant campaigns | The level/wall handler completed 128 runs / 8,192 calls with zero unexpected reverts; the approval/footprint handler completed 64 runs / 4,096 calls with zero unexpected reverts. |
+| Seeded complete `forge test` | 219 passed, zero failures, zero skipped across 30 suites in 483.50 seconds (491.01 seconds including compilation), below the local check's 600-second limit. The final level/wall campaign completed all 8,192 calls with zero unexpected reverts. |
+| `forge fmt --check` | Passed. |
+| `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s test -p 'test_*.py' -v` | All six checks passed, including static-tuple manifest/ABI validation. |
+| `git diff --check` | Passed. |
+| SHA-256 baseline comparison | The only changed existing source/config/dependency file is `src/OGClubClubs.sol`. Other existing application sources, libraries, vendored dependencies, protected build files and the original raffle deployment script match the baseline. |
+| Runtime / factory | OGClubClubs runtime is 15,260 bytes, below 24,576. Empty-chain CREATE2, manifest-word decoding, owner assignment, and the protected reachable-opcode rule are exercised locally. |
 
-Forge's lint output includes existing-project warnings and two notices on the
-new contract: the vault zero check is performed through `_nonzero` (all six
-zero constructor arguments are tested), and ClubMinted follows `_safeMint`'s
-receiver call (both mint entry points are guarded and callback rollback is
-tested). These are reviewed notices, not compiler or test failures.
+Forge's lint notices include existing-project warnings and reviewed notices on
+clubs: vault zero validation is delegated to `_nonzero`, mint events follow the
+safe receiver callback as before, and bitmap/coordinate casts have explicit
+bounds. The reentrancy and malformed-coordinate tests cover those paths. These
+notices are not compiler or test failures.

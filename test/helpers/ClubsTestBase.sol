@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
+import {PepeMock} from "./PepeMocks.sol";
+import {IDelegateRegistry} from "../../src/interfaces/IDelegateRegistry.sol";
 
 import {Test} from "forge-std/Test.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
@@ -14,6 +16,7 @@ abstract contract ClubsTestBase is Test {
     OGClubFurniture internal furniture;
     OGClubFarmVault internal vault;
     OGClubClubs internal clubs;
+    PepeMock internal pepes = new PepeMock();
     address internal alice = makeAddr("club alice");
     address internal bob = makeAddr("club bob");
     address internal operator = makeAddr("club operator");
@@ -23,13 +26,23 @@ abstract contract ClubsTestBase is Test {
         token = new MockOG(address(this));
         furniture = new OGClubFurniture(address(this), royalty);
         vault = new OGClubFarmVault(token, address(this));
-        clubs = new OGClubClubs(token, address(vault), PRICE, IERC1155(address(furniture)), address(this), royalty);
+        clubs = new OGClubClubs(
+            token,
+            address(vault),
+            PRICE,
+            IERC1155(address(furniture)),
+            address(this),
+            royalty,
+            pepes,
+            IDelegateRegistry(address(0)),
+            OGClubClubs.UpgradePrices(201, 401, 801)
+        );
         furniture.grantMinter(address(this));
         clubs.setSaleOpen(true);
-        clubs.setFootprint(1, 1, 1);
-        clubs.setFootprint(2, 2, 1);
-        clubs.setFootprint(3, 2, 2);
-        clubs.setFootprint(4, 4, 4);
+        clubs.setFootprint(1, 1, 1, false);
+        clubs.setFootprint(2, 2, 1, false);
+        clubs.setFootprint(3, 2, 2, false);
+        clubs.setFootprint(4, 4, 4, false);
         fund(alice, 100 * PRICE);
         fund(bob, 100 * PRICE);
         stock(alice, 1, 200);
@@ -37,8 +50,11 @@ abstract contract ClubsTestBase is Test {
         stock(alice, 3, 200);
         stock(alice, 4, 200);
         stock(bob, 1, 200);
+        pepes.mint(alice, 1);
+        pepes.mint(alice, 2);
+        pepes.mint(bob, 3);
         vm.prank(alice);
-        clubs.mintClub();
+        clubs.mintClub(1);
     }
 
     function fund(address who, uint256 amount) internal {
